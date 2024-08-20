@@ -1,6 +1,11 @@
 #![warn(clippy::all, rust_2018_idioms)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
+use eframe::CreationContext;
+use eframe::egui_wgpu::WgpuConfiguration;
+use eframe::wgpu::PowerPreference::HighPerformance;
+use eframe::wgpu::PresentMode::Immediate;
+
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
@@ -20,7 +25,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "eframe template",
         native_options,
-        Box::new(|cc| Ok(Box::new(eframe_template::TemplateApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(sdt_thing::MehApp::new(cc)))),
     )
 }
 
@@ -30,14 +35,21 @@ fn main() {
     // Redirect `log` message to `console.log` and friends:
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
-    let web_options = eframe::WebOptions::default();
+    let web_options = eframe::WebOptions {
+        wgpu_options: WgpuConfiguration {
+            // present_mode: Immediate,
+            // power_preference: HighPerformance,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
 
     wasm_bindgen_futures::spawn_local(async {
         let start_result = eframe::WebRunner::new()
             .start(
                 "the_canvas_id",
                 web_options,
-                Box::new(|cc| Ok(Box::new(eframe_template::TemplateApp::new(cc)))),
+                Box::new(|cc| Ok(Box::new(sdt_thing::MehApp::new(cc)))),
             )
             .await;
 

@@ -1,109 +1,118 @@
-/// We derive Deserialize/Serialize so we can persist app state on shutdown.
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(default)] // if we add new fields, give them default values when deserializing old state
-pub struct TemplateApp {
-    // Example stuff:
-    label: String,
+use std::iter;
+use std::sync::{Mutex, MutexGuard};
+use eframe::{App, CreationContext, Frame};
+use eframe::egui_wgpu::Renderer;
+use eframe::wgpu::{CommandEncoderDescriptor, Device, Extent3d, Queue, TextureFormat};
+use egui::load::SizedTexture;
+use egui::{Image, Ui, Vec2, Window};
+use once_cell::sync::Lazy;
+use crate::{get, init_static};
+use crate::packages::time_package::TimePackage;
+use crate::render_state::structs::EguiTexturePackage;
+use crate::render_state::test::test_render_pipeline::TestRenderPipeline;
 
-    #[serde(skip)] // This how you opt-out of serialization of a field
-    value: f32,
+
+// Globals
+init_static!(TIME: TimePackage => {TimePackage::new()});
+
+
+pub struct MehApp {
+    meh_renderer: MehRenderer,
 }
+impl MehApp {
+    pub fn new(cc: &CreationContext<'_>) -> Self {
+        let render_state = cc.wgpu_render_state.as_ref().unwrap();
+        let renderer = &mut render_state.renderer.write();
+        let device = &render_state.device;
 
-impl Default for TemplateApp {
-    fn default() -> Self {
+
+        let meh_renderer = MehRenderer::new(device, renderer);
+
+
         Self {
-            // Example stuff:
-            label: "Hello World!".to_owned(),
-            value: 2.7,
+            meh_renderer,
         }
     }
+
+    fn update(&mut self) {
+        get!(TIME).update();
+    }
+
+    fn render(&mut self, frame: &mut Frame) {
+        let r_thing = frame.wgpu_render_state().unwrap();
+        let device = &r_thing.device;
+        let queue = &r_thing.queue;
+
+        self.meh_renderer.render_pass(device, queue)
+
+    }
+
+    fn ui(&mut self, ctx: &egui::Context) {
+        Window::new("test")
+            .show(ctx, |ui| {
+                self.meh_renderer.display(ui);
+                ui.label(format!("{}", get!(TIME).fps));
+            });
+    }
 }
 
-impl TemplateApp {
-    /// Called once before the first frame.
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // This is also where you can customize the look and feel of egui using
-        // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
+impl App for MehApp {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut Frame) {
+        self.update();
+        self.render(frame);
+        self.ui(ctx);
 
-        // Load previous app state (if any).
-        // Note that you must enable the `persistence` feature for this to work.
-        if let Some(storage) = cc.storage {
-            return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+        ctx.request_repaint();
+    }
+}
+
+
+pub struct MehRenderer {
+    pub test_render_pipeline: TestRenderPipeline,
+    pub egui_texture_package: EguiTexturePackage,
+}
+impl MehRenderer {
+    pub fn new(device: &Device, renderer: &mut Renderer) -> Self {
+        let test_render_pipeline = TestRenderPipeline::new(device, TextureFormat::Rgba8Unorm);
+
+        let egui_texture_package = EguiTexturePackage::new(Extent3d {
+            width: 250,
+            height: 250,
+            depth_or_array_layers: 1,
+        }, device, renderer);
+
+        Self {
+            test_render_pipeline,
+            egui_texture_package,
         }
-
-        Default::default()
-    }
-}
-
-impl eframe::App for TemplateApp {
-    /// Called by the frame work to save state before shutdown.
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
-    /// Called each time the UI needs repainting, which may be many times per second.
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
-        // For inspiration and more examples, go to https://emilk.github.io/egui
+    pub fn update(&mut self) {
 
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            // The top panel is often a good place for a menu bar:
+    }
 
-            egui::menu::bar(ui, |ui| {
-                // NOTE: no File->Quit on web pages!
-                let is_web = cfg!(target_arch = "wasm32");
-                if !is_web {
-                    ui.menu_button("File", |ui| {
-                        if ui.button("Quit").clicked() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                    });
-                    ui.add_space(16.0);
-                }
-
-                egui::widgets::global_dark_light_mode_buttons(ui);
-            });
+    pub fn render_pass(&self, device: &Device, queue: &Queue) {
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("the only encoder"),
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("eframe template");
+        self.test_render_pipeline.render_pass(&mut encoder, &self.egui_texture_package.view);
 
-            ui.horizontal(|ui| {
-                ui.label("Write something: ");
-                ui.text_edit_singleline(&mut self.label);
-            });
 
-            ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-                self.value += 1.0;
-            }
-
-            ui.separator();
-
-            ui.add(egui::github_link_file!(
-                "https://github.com/emilk/eframe_template/blob/main/",
-                "Source code."
-            ));
-
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                powered_by_egui_and_eframe(ui);
-                egui::warn_if_debug_build(ui);
-            });
-        });
+        queue.submit(iter::once(encoder.finish()));
     }
-}
 
-fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        ui.label("Powered by ");
-        ui.hyperlink_to("egui", "https://github.com/emilk/egui");
-        ui.label(" and ");
-        ui.hyperlink_to(
-            "eframe",
-            "https://github.com/emilk/egui/tree/master/crates/eframe",
+    pub fn display(&self, ui: &mut Ui) {
+        ui.add(
+            Image::from_texture(
+                SizedTexture::new(
+                    self.egui_texture_package.texture_id,
+                    Vec2::new(
+                        self.egui_texture_package.texture.size().width as f32,
+                        self.egui_texture_package.texture.size().height as f32
+                    )
+                )
+            )
         );
-        ui.label(".");
-    });
+    }
 }
